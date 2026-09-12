@@ -19,17 +19,23 @@ def limit_resources(cpu_seconds=5, memory_mb=256):
         resource.setrlimit(resource.RLIMIT_AS, (memory_bytes, memory_bytes))
 
 
-def run_code(code: str, timeout_seconds: int = 10) -> dict:
+def run_code(code: str, timeout_seconds: int = 10, fixture_files: dict = None) -> dict:
     """
-    The Executor node. Takes generated code as a string, runs it safely,
-    and returns pass/fail plus the real error output.
-    LangGraph will later branch on result["success"].
+    fixture_files: optional dict of {filename: content} to write into the
+    sandbox directory before running, simulating pre-existing input files
+    the task assumes are present.
     """
     with tempfile.TemporaryDirectory() as tmp_dir:
         script_path = os.path.join(tmp_dir, "generated_code.py")
 
+        if fixture_files:
+            for filename, content in fixture_files.items():
+                with open(os.path.join(tmp_dir, filename), "w") as f:
+                    f.write(content)
+
         with open(script_path, "w") as f:
             f.write(code)
+        # ... rest unchanged
 
         try:
             result = subprocess.run(

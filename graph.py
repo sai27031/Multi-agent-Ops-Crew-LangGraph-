@@ -1,22 +1,30 @@
 import json
-import time
 from typing import TypedDict, Optional
 
 from langgraph.graph import StateGraph, END
 
+from nodes.spec_reader import extract_task
 from nodes.coder import generate_code
 from nodes.executor import run_code
 from nodes.debugger import debug_code
+from nodes.report_writer import write_report
 from config import MAX_RETRIES, LOG_FILE
 
 
 class CrewState(TypedDict):
+    raw_spec: str
     task_description: str
     current_code: str
     execution_result: Optional[dict]
     attempt: int
-    status: str  # "in_progress" | "success" | "failed"
-    history: list  # record of every attempt, for logging
+    status: str
+    history: list
+    report: str
+
+
+def spec_reader_node(state: CrewState) -> CrewState:
+    task = extract_task(state["raw_spec"])
+    return {**state, "task_description": task}
 
 
 def coder_node(state: CrewState) -> CrewState:
@@ -33,15 +41,11 @@ def coder_node(state: CrewState) -> CrewState:
 
 
 def executor_node(state: CrewState) -> CrewState:
-    result = run_code(state["current_code"])
-    attempt_record = {
-        "attempt": state["attempt"] + 1,
-        "code": state["current_code"],
-        "success": result["success"],
-        "error": result["stderr"] if not result["success"] else None,
-    }
-    new_history = state["history"] + [attempt_record]
+    fixtures = {"data.csv": "amount\n10.5\n20.0\n5.25\n"}
+    result = run_code(state["current_code"], fixture_files=fixtures)
+    ...
 
+    
     if result["success"]:
         status = "success"
     elif state["attempt"] + 1 >= MAX_RETRIES:
@@ -58,13 +62,20 @@ def executor_node(state: CrewState) -> CrewState:
     }
 
 
+def report_writer_node(state: CrewState) -> CrewState:
+    report = write_report(
+        state["task_description"],
+        state["status"],
+        state["attempt"],
+        state["history"],
+    )
+    return {**state, "report": report}
+
+
 def route_after_execution(state: CrewState) -> str:
-    if state["status"] == "success":
-        return "done"
-    elif state["status"] == "failed":
-        return "done"
-    else:
-        return "retry"
+    if state["status"] in ("success", "failed"):
+        return "report"
+    return "retry"
 
 
 def log_run(state: CrewState):
@@ -73,6 +84,7 @@ def log_run(state: CrewState):
         "final_status": state["status"],
         "total_attempts": state["attempt"],
         "history": state["history"],
+        "report": state["report"],
     }
     with open(LOG_FILE, "a") as f:
         f.write(json.dumps(log_entry) + "\n")
@@ -81,19 +93,23 @@ def log_run(state: CrewState):
 def build_graph():
     graph = StateGraph(CrewState)
 
+    graph.add_node("spec_reader", spec_reader_node)
     graph.add_node("coder", coder_node)
     graph.add_node("executor", executor_node)
+    graph.add_node("report_writer", report_writer_node)
 
-    graph.set_entry_point("coder")
+    graph.set_entry_point("spec_reader")
+    graph.add_edge("spec_reader", "coder")
     graph.add_edge("coder", "executor")
     graph.add_conditional_edges(
         "executor",
         route_after_execution,
         {
             "retry": "coder",
-            "done": END,
+            "report": "report_writer",
         },
     )
+    graph.add_edge("report_writer", END)
 
     return graph.compile()
 
@@ -101,14 +117,21 @@ def build_graph():
 if __name__ == "__main__":
     app = build_graph()
 
-    task = "Write a function called process_data that reads a CSV file called 'data.csv', calculates the sum of the 'amount' column, and prints the total. Assume the file exists in the current directory."
+    raw_spec = """
+    So for this part I need something that reads a CSV file called
+    data.csv and adds up everything in the 'amount' column, then
+    prints the total. Assume the file exists in the current directory.
+    """
+
     initial_state: CrewState = {
-        "task_description": task,
+        "raw_spec": raw_spec,
+        "task_description": "",
         "current_code": "",
         "execution_result": None,
         "attempt": 0,
         "status": "in_progress",
         "history": [],
+        "report": "",
     }
 
     final_state = app.invoke(initial_state)
@@ -119,7 +142,5 @@ if __name__ == "__main__":
     print(f"Total attempts: {final_state['attempt']}")
     print("\n--- Final code ---")
     print(final_state["current_code"])
-
-    if final_state["status"] == "failed":
-        print("\n--- Last error (unresolved) ---")
-        print(final_state["history"][-1]["error"])
+    print("\n--- Report ---")
+    print(final_state["report"])
