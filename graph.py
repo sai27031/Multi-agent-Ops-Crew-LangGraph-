@@ -123,10 +123,10 @@ if __name__ == "__main__":
     app = build_graph()
 
     raw_spec = """
-    So for this part I need something that reads a CSV file called
-    data.csv and adds up everything in the 'amount' column, then
-    prints the total. Assume the file exists in the current directory.
-    """
+I need a function that takes a string and checks if it's a valid
+palindrome, but ignoring spaces, punctuation, and capitalization.
+Should work for something like 'A man, a plan, a canal: Panama'.
+"""
 
     initial_state: CrewState = {
         "raw_spec": raw_spec,
