@@ -43,9 +43,15 @@ def coder_node(state: CrewState) -> CrewState:
 def executor_node(state: CrewState) -> CrewState:
     fixtures = {"data.csv": "amount\n10.5\n20.0\n5.25\n"}
     result = run_code(state["current_code"], fixture_files=fixtures)
-    ...
 
-    
+    attempt_record = {
+        "attempt": state["attempt"] + 1,
+        "code": state["current_code"],
+        "success": result["success"],
+        "error": result["stderr"] if not result["success"] else None,
+    }
+    new_history = state["history"] + [attempt_record]
+
     if result["success"]:
         status = "success"
     elif state["attempt"] + 1 >= MAX_RETRIES:
@@ -60,7 +66,6 @@ def executor_node(state: CrewState) -> CrewState:
         "status": status,
         "history": new_history,
     }
-
 
 def report_writer_node(state: CrewState) -> CrewState:
     report = write_report(
